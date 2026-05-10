@@ -1,0 +1,7 @@
+dxcam[cv2]
+pyzmq
+pygame
+pywin32
+numpy
+opencv-python
+PyQt6

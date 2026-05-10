@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Test files
+test_*.py
+*_test.py
+
+# Debug output
+*_err.txt
+*_error.txt
+*_out.txt
+
+# Playwright
+.playwright-mcp/
+
+# OS
+Thumbs.db
+.DS_Store
