@@ -26,21 +26,9 @@ Multi-Control.exe viewer 192.168.1.5  # 直连
 
 ```bash
 pip install -r requirements.txt
-python main.py host
-python main.py viewer
-python main.py viewer 192.168.1.5
-```
-
-### 本地双机测试
-
-在同一台机器上测试时，用 `--region` 限制采集区域避免画面无限递归：
-
-```bash
-# 终端 1：只采集屏幕上半部分
-python main.py host --region 0,0,1536,700
-
-# 终端 2：连接本地
-python main.py viewer 127.0.0.1
+python main.py host           # 启动被控端
+python main.py viewer         # 自动发现并连接
+python main.py viewer 192.168.1.5  # 直连指定 IP
 ```
 
 ## 架构
@@ -55,9 +43,10 @@ DXCam → JPEG → ZMQ PUB ────────────→ ZMQ SUB → �
    ↓                                            ↓
 ZMQ ROUTER ←──────────────────────────── ZMQ DEALER
    ↓
-SendInput → 注入 Windows 输入队列
+PostMessage → 直接发送到目标窗口（不碰系统光标）
+GDI 覆盖层 → 渲染远程红色光标
    ↓
-与本地物理输入合流 → 同一焦点窗口
+远程光标不干扰被控端本地操作
 ```
 
 | 模块 | 技术栈 |
@@ -65,7 +54,7 @@ SendInput → 注入 Windows 输入队列
 | 屏幕采集 | DXCam (DXGI) |
 | 图像压缩 | OpenCV (JPEG) |
 | 网络传输 | ZeroMQ (PUB/SUB + DEALER/ROUTER) |
-| 输入注入 | Win32 SendInput |
+| 输入注入 | Win32 PostMessage（独立光标） |
 | 远程光标 | GDI 透明覆盖窗口 |
 | 控制端 UI | Pygame |
 | 被控端面板 | PyQt6 |
