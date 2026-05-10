@@ -3,7 +3,6 @@
 import socket
 import sys
 import threading
-import time
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
@@ -13,7 +12,6 @@ from .cursor_overlay import CursorOverlay
 from .input_inject import (
     inject_key,
     inject_mouse_button,
-    inject_mouse_move,
     inject_mouse_wheel,
 )
 from ..network.command import CommandReceiver
@@ -104,11 +102,12 @@ def run_host() -> None:
     print(f"  画面: {stream_addr}")
     print(f"  输入: {cmd_addr}")
 
-    screen_w = capture.camera.width
-    screen_h = capture.camera.height
-
     # ── 输入接收线程 ─────────────────────────
+    remote_x = 0
+    remote_y = 0
+
     def input_loop() -> None:
+        nonlocal remote_x, remote_y
         while app_running[0]:
             msg = cmd_receiver.recv_input(timeout_ms=10)
             if msg is None:
@@ -118,12 +117,12 @@ def run_host() -> None:
                 try:
                     if etype == "mouse_move":
                         x, y = evt["x"], evt["y"]
-                        inject_mouse_move(x, y, screen_w, screen_h)
+                        remote_x, remote_y = x, y
                         overlay.update(x, y)
                     elif etype == "mouse_button":
-                        inject_mouse_button(evt["button"], evt["pressed"])
+                        inject_mouse_button(evt["button"], evt["pressed"], remote_x, remote_y)
                     elif etype == "mouse_wheel":
-                        inject_mouse_wheel(evt["delta"])
+                        inject_mouse_wheel(evt["delta"], remote_x, remote_y)
                     elif etype == "key":
                         vk = evt.get("vk")
                         if vk is not None:

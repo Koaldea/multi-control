@@ -1,33 +1,15 @@
-"""通过 SendInput API 注入远程键鼠事件到 Windows 输入队列."""
+"""远程输入注入 — PostMessage 实现独立光标，不影响被控端系统光标。"""
 
 import ctypes
 from ctypes import wintypes
 
-# Win32 常量
-INPUT_MOUSE = 0
+import win32api
+import win32con
+import win32gui
+
+# ── 键盘 SendInput ──────────────────────────
 INPUT_KEYBOARD = 1
-MOUSEEVENTF_MOVE = 0x0001
-MOUSEEVENTF_ABSOLUTE = 0x8000
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_RIGHTDOWN = 0x0008
-MOUSEEVENTF_RIGHTUP = 0x0010
-MOUSEEVENTF_MIDDLEDOWN = 0x0020
-MOUSEEVENTF_MIDDLEUP = 0x0040
-MOUSEEVENTF_WHEEL = 0x0800
 KEYEVENTF_KEYUP = 0x0002
-KEYEVENTF_SCANCODE = 0x0008
-
-
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
-    ]
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -41,79 +23,76 @@ class KEYBDINPUT(ctypes.Structure):
 
 
 class INPUT_UNION(ctypes.Union):
-    _fields_ = [
-        ("mi", MOUSEINPUT),
-        ("ki", KEYBDINPUT),
-    ]
+    _fields_ = [("ki", KEYBDINPUT)]
 
 
 class INPUT(ctypes.Structure):
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("union", INPUT_UNION),
-    ]
+    _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
 
 
 user32 = ctypes.windll.user32
 
 
-def _send_input(*inputs: INPUT) -> int:
-    arr = (INPUT * len(inputs))(*inputs)
-    result = user32.SendInput(len(arr), arr, ctypes.sizeof(INPUT))
-    if result == 0:
-        err = ctypes.windll.kernel32.GetLastError()
-        print(f"SendInput failed: error={err}")
-    return result
-
-
-def inject_mouse_move(x: int, y: int, screen_w: int, screen_h: int) -> None:
-    """移动鼠标到绝对坐标 (x, y)，坐标范围 0-screen_w, 0-screen_h."""
-    abs_x = int(x * 65535 / (screen_w - 1)) if screen_w > 1 else 0
-    abs_y = int(y * 65535 / (screen_h - 1)) if screen_h > 1 else 0
-
-    inp = INPUT()
-    inp.type = INPUT_MOUSE
-    inp.union.mi.dx = abs_x
-    inp.union.mi.dy = abs_y
-    inp.union.mi.mouseData = 0
-    inp.union.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE
-    _send_input(inp)
-
-
-def inject_mouse_button(button: str, pressed: bool) -> None:
-    """按下/释放鼠标按键. button: 'left' | 'right' | 'middle'."""
-    flags = {
-        ("left", True): MOUSEEVENTF_LEFTDOWN,
-        ("left", False): MOUSEEVENTF_LEFTUP,
-        ("right", True): MOUSEEVENTF_RIGHTDOWN,
-        ("right", False): MOUSEEVENTF_RIGHTUP,
-        ("middle", True): MOUSEEVENTF_MIDDLEDOWN,
-        ("middle", False): MOUSEEVENTF_MIDDLEUP,
-    }
-    flag = flags.get((button, pressed))
-    if flag is None:
-        return
-
-    inp = INPUT()
-    inp.type = INPUT_MOUSE
-    inp.union.mi.dwFlags = flag
-    _send_input(inp)
-
-
-def inject_mouse_wheel(delta: int) -> None:
-    """滚轮滚动，delta 正=上滚，负=下滚."""
-    inp = INPUT()
-    inp.type = INPUT_MOUSE
-    inp.union.mi.mouseData = delta * 120
-    inp.union.mi.dwFlags = MOUSEEVENTF_WHEEL
-    _send_input(inp)
-
-
-def inject_key(vk: int, pressed: bool) -> None:
-    """按下/释放键盘按键，vk 为 Windows 虚拟键码."""
+def _send_keyboard(vk: int, pressed: bool) -> None:
     inp = INPUT()
     inp.type = INPUT_KEYBOARD
     inp.union.ki.wVk = vk
     inp.union.ki.wScan = 0
-    inp.union.ki.dwFlags = KEYEVENTF_KEYUP if not pressed else 0
-    _send_input(inp)
+    inp.union.ki.dwFlags = 0 if pressed else KEYEVENTF_KEYUP
+    arr = (INPUT * 1)(inp)
+    result = user32.SendInput(1, arr, ctypes.sizeof(INPUT))
+    if result == 0:
+        err = ctypes.windll.kernel32.GetLastError()
+        print(f"SendInput(key) failed: error={err}")
+
+
+# ── 公共 API ────────────────────────────────
+
+
+def inject_mouse_move(x: int, y: int, screen_w: int, screen_h: int) -> None:
+    """仅存根，不移动系统光标。光标由 overlay 单独管理。"""
+    pass
+
+
+def inject_mouse_button(button: str, pressed: bool, x: int, y: int) -> None:
+    """PostMessage 发送按键事件到 (x,y) 下方的窗口，不碰系统光标。"""
+    hwnd = win32gui.WindowFromPoint((x, y))
+    if not hwnd:
+        return
+
+    msg_map = {
+        ("left", True): win32con.WM_LBUTTONDOWN,
+        ("left", False): win32con.WM_LBUTTONUP,
+        ("right", True): win32con.WM_RBUTTONDOWN,
+        ("right", False): win32con.WM_RBUTTONUP,
+        ("middle", True): win32con.WM_MBUTTONDOWN,
+        ("middle", False): win32con.WM_MBUTTONUP,
+    }
+    msg = msg_map.get((button, pressed))
+    if msg is None:
+        return
+
+    cx, cy = win32gui.ScreenToClient(hwnd, (x, y))
+    lparam = win32api.MAKELONG(cx, cy)
+    wparam = 0
+    if pressed:
+        btn_id = {"left": win32con.MK_LBUTTON, "right": win32con.MK_RBUTTON, "middle": win32con.MK_MBUTTON}
+        wparam = btn_id.get(button, 0)
+    win32gui.PostMessage(hwnd, msg, wparam, lparam)
+
+
+def inject_mouse_wheel(delta: int, x: int, y: int) -> None:
+    """PostMessage 发送滚轮事件到 (x,y) 下方的窗口。"""
+    hwnd = win32gui.WindowFromPoint((x, y))
+    if not hwnd:
+        return
+
+    cx, cy = win32gui.ScreenToClient(hwnd, (x, y))
+    wparam = win32api.MAKELONG(0, delta * 120)
+    lparam = win32api.MAKELONG(cx, cy)
+    win32gui.PostMessage(hwnd, win32con.WM_MOUSEWHEEL, wparam, lparam)
+
+
+def inject_key(vk: int, pressed: bool) -> None:
+    """按下/释放键盘按键，vk 为 Windows 虚拟键码。"""
+    _send_keyboard(vk, pressed)
